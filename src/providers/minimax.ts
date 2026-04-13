@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import type { ProviderAdapter, ExecuteOptions, ExecuteResult, ReviewOptions, ReviewResult } from './adapter.js';
 
-const MINIMAX_API_URL = 'https://api.minimaxi.chat/v1/text/chatcompletion_v2';
+const MINIMAX_API_URL = 'https://api.minimax.io/v1/text/chatcompletion_v2';
 
 export class MinimaxAdapter implements ProviderAdapter {
   name = 'minimax';
