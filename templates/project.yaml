@@ -1,0 +1,46 @@
+# Project Configuration — Oasis
+# Edit this file to configure deploy, review, monitoring, and scheduling
+
+review:
+  provider: ""          # uses default provider if empty
+  model: ""             # uses default model if empty
+  phases:
+    proposal: auto      # auto | human | skip
+    spec: auto
+    design: human       # human review recommended for design
+    tasks: auto
+    apply: auto
+    verify: auto
+  max_retries: 2
+  multi_pass: true      # enable parallel quality/security/deps review
+
+scheduler:
+  auto_start: false
+  notify: both          # terminal | system | both
+
+deploy:
+  environments:
+    staging:
+      platform: ""
+      command: ""
+      pre_deploy: []
+      post_deploy: []
+      auto: true
+    production:
+      platform: ""
+      command: ""
+      pre_deploy: []
+      post_deploy: []
+      auto: false
+      notify: true
+
+observability:
+  health_endpoints:
+    - name: api
+      url: https://api.example.com/health
+      expected_status: 200
+      timeout_ms: 5000
+  log_command: ""                    # e.g., "railway logs --tail 50"
+  rollback_command: ""               # e.g., "railway rollback"
+  monitor_interval_seconds: 60
+  max_failures_before_rollback: 3
