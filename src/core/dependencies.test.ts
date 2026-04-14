@@ -20,16 +20,38 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
+const mockAdapters = new Map<string, { isAvailable: ReturnType<typeof vi.fn>; getVersion: ReturnType<typeof vi.fn> }>();
+
+vi.mock('../providers/index.js', () => ({
+  listProviders: vi.fn(() => Array.from(mockAdapters.keys())),
+  getProviderAdapter: vi.fn((name: string) => {
+    const adapter = mockAdapters.get(name);
+    if (!adapter) throw new Error(`Unknown provider: ${name}`);
+    return adapter;
+  }),
+}));
+
 import { execa } from 'execa';
 import { confirm } from '@inquirer/prompts';
 import {
   checkDependency,
   checkAllDependencies,
+  checkAIProviders,
   getAvailableProviders,
   installMissing,
   type Dependency,
   type DependencyStatus,
 } from './dependencies.js';
+
+function setProviders(providers: Record<string, { available: boolean; version?: string }>): void {
+  mockAdapters.clear();
+  for (const [name, { available, version }] of Object.entries(providers)) {
+    mockAdapters.set(name, {
+      isAvailable: vi.fn().mockResolvedValue(available),
+      getVersion: vi.fn().mockResolvedValue(version ?? 'unknown'),
+    });
+  }
+}
 
 describe('getAvailableProviders()', () => {
   it('filters only installed ai-providers', () => {
@@ -108,27 +130,92 @@ describe('checkDependency()', () => {
   });
 });
 
-describe('checkAllDependencies()', () => {
+describe('checkAIProviders()', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('returns a status for every dependency', async () => {
+  it('returns one status per registered provider', async () => {
+    setProviders({
+      claude: { available: true, version: 'claude 1.0' },
+      codex: { available: false },
+      minimax: { available: true, version: 'minimax adapter' },
+    });
+
+    const results = await checkAIProviders();
+
+    expect(results).toHaveLength(3);
+    expect(results.map(r => r.name).sort()).toEqual(['claude', 'codex', 'minimax']);
+  });
+
+  it('marks all results with type ai-provider', async () => {
+    setProviders({
+      claude: { available: true },
+      minimax: { available: false },
+    });
+
+    const results = await checkAIProviders();
+
+    for (const r of results) {
+      expect(r.type).toBe('ai-provider');
+    }
+  });
+
+  it('captures version only when available', async () => {
+    setProviders({
+      claude: { available: true, version: '1.2.3' },
+      codex: { available: false },
+    });
+
+    const results = await checkAIProviders();
+    const claude = results.find(r => r.name === 'claude');
+    const codex = results.find(r => r.name === 'codex');
+
+    expect(claude?.installed).toBe(true);
+    expect(claude?.version).toBe('1.2.3');
+    expect(codex?.installed).toBe(false);
+    expect(codex?.version).toBeUndefined();
+  });
+
+  it('handles adapter throwing as not installed', async () => {
+    mockAdapters.clear();
+    mockAdapters.set('broken', {
+      isAvailable: vi.fn().mockRejectedValue(new Error('boom')),
+      getVersion: vi.fn(),
+    });
+
+    const results = await checkAIProviders();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].installed).toBe(false);
+  });
+});
+
+describe('checkAllDependencies()', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setProviders({
+      claude: { available: true, version: '1.0' },
+      codex: { available: false },
+      minimax: { available: true, version: 'minimax' },
+    });
+  });
+
+  it('combines system/mcp deps with AI providers', async () => {
     vi.mocked(execa).mockResolvedValue({ stdout: '1.0.0' } as any);
 
     const results = await checkAllDependencies();
 
-    // git, engram, context7, claude, codex — 5 defined deps
-    expect(results.length).toBeGreaterThanOrEqual(5);
-    for (const r of results) {
-      expect(r).toHaveProperty('name');
-      expect(r).toHaveProperty('installed');
-      expect(r).toHaveProperty('type');
-    }
+    // 3 system/mcp (git, engram, context7) + 3 providers from setProviders above
+    expect(results.length).toBe(6);
+
+    const providerResults = results.filter(r => r.type === 'ai-provider');
+    expect(providerResults).toHaveLength(3);
+    expect(providerResults.map(r => r.name).sort()).toEqual(['claude', 'codex', 'minimax']);
   });
 
-  it('includes both installed and missing deps', async () => {
+  it('includes both installed and missing entries', async () => {
     vi.mocked(execa)
       .mockResolvedValueOnce({ stdout: 'git version 2.40.0' } as any) // git
-      .mockRejectedValue(new Error('not found'));                       // rest
+      .mockRejectedValue(new Error('not found'));                       // rest of deps
 
     const results = await checkAllDependencies();
     const installed = results.filter(r => r.installed);

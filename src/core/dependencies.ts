@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { confirm } from '@inquirer/prompts';
 import { log } from '../utils/logger.js';
+import { listProviders, getProviderAdapter } from '../providers/index.js';
 
 export interface Dependency {
   name: string;
@@ -42,18 +43,9 @@ const DEPENDENCIES: Dependency[] = [
     installPrompt: 'Context7 (contextual documentation for AI)',
     type: 'mcp',
   },
-  {
-    name: 'claude',
-    checkCommand: ['claude', '--version'],
-    required: false,
-    type: 'ai-provider',
-  },
-  {
-    name: 'codex',
-    checkCommand: ['codex', '--version'],
-    required: false,
-    type: 'ai-provider',
-  },
+  // AI providers are detected dynamically via their adapter's isAvailable()
+  // method — see checkAIProviders() below. This keeps detection logic in
+  // each adapter (e.g., MiniMax checks env var, Claude checks local binary).
 ];
 
 export async function checkDependency(dep: Dependency): Promise<DependencyStatus> {
@@ -68,11 +60,40 @@ export async function checkDependency(dep: Dependency): Promise<DependencyStatus
   }
 }
 
+export async function checkAIProviders(): Promise<DependencyStatus[]> {
+  const results: DependencyStatus[] = [];
+
+  for (const name of listProviders()) {
+    const adapter = getProviderAdapter(name);
+    let installed = false;
+    let version: string | undefined;
+
+    try {
+      installed = await adapter.isAvailable();
+      if (installed) {
+        version = await adapter.getVersion();
+      }
+    } catch {
+      installed = false;
+    }
+
+    results.push({
+      name,
+      installed,
+      version,
+      type: 'ai-provider',
+    });
+  }
+
+  return results;
+}
+
 export async function checkAllDependencies(): Promise<DependencyStatus[]> {
   log.header('Checking dependencies');
 
   const results: DependencyStatus[] = [];
 
+  // System and MCP dependencies (binary checks)
   for (const dep of DEPENDENCIES) {
     const status = await checkDependency(dep);
 
@@ -81,9 +102,20 @@ export async function checkAllDependencies(): Promise<DependencyStatus[]> {
     } else if (dep.required) {
       log.error(`${dep.name} — required but not found`);
     } else {
-      log.warn(`${dep.name} — not found${dep.type === 'ai-provider' ? ' (optional)' : ''}`);
+      log.warn(`${dep.name} — not found`);
     }
 
+    results.push(status);
+  }
+
+  // AI providers (each adapter knows how to detect itself)
+  const providerStatuses = await checkAIProviders();
+  for (const status of providerStatuses) {
+    if (status.installed) {
+      log.success(`${status.name} (${status.version ?? 'available'})`);
+    } else {
+      log.warn(`${status.name} — not available (optional)`);
+    }
     results.push(status);
   }
 
