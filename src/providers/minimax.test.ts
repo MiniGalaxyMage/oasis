@@ -22,31 +22,23 @@ describe('MinimaxAdapter', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('returns true when API key is set and API responds ok', async () => {
+    it('returns true when MINIMAX_API_KEY is set', async () => {
       process.env.MINIMAX_API_KEY = 'test-key-123';
-      mockFetch.mockResolvedValueOnce(new Response('{}', { status: 200 }) as any);
 
       const result = await adapter.isAvailable();
 
       expect(result).toBe(true);
+      // Should NOT make a remote call — consistent with claude/codex adapters
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('returns true when API returns 400 (auth ok, bad request)', async () => {
+    it('returns true when MINIMAX_API_TOKEN is set (fallback)', async () => {
       process.env.MINIMAX_API_TOKEN = 'test-key-456';
-      mockFetch.mockResolvedValueOnce(new Response('{"error":"bad request"}', { status: 400 }) as any);
 
       const result = await adapter.isAvailable();
 
       expect(result).toBe(true);
-    });
-
-    it('returns false when fetch throws', async () => {
-      process.env.MINIMAX_API_KEY = 'test-key';
-      mockFetch.mockRejectedValueOnce(new Error('network error'));
-
-      const result = await adapter.isAvailable();
-
-      expect(result).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
@@ -75,10 +67,10 @@ describe('MinimaxAdapter', () => {
   });
 
   describe('execute()', () => {
-    it('returns stdout from API response', async () => {
+    it('returns stdout from OpenAI-style response (message.content)', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
       mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
-        choices: [{ messages: [{ content: 'hello from minimax' }] }],
+        choices: [{ message: { content: 'hello from minimax' } }],
       }), { status: 200 }) as any);
 
       const result = await adapter.execute({
@@ -87,6 +79,21 @@ describe('MinimaxAdapter', () => {
       });
 
       expect(result.stdout).toBe('hello from minimax');
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('returns stdout from legacy response shape (messages[0].content)', async () => {
+      process.env.MINIMAX_API_KEY = 'test-key';
+      mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ messages: [{ content: 'legacy shape' }] }],
+      }), { status: 200 }) as any);
+
+      const result = await adapter.execute({
+        prompt: 'say hello',
+        workingDir: '/tmp',
+      });
+
+      expect(result.stdout).toBe('legacy shape');
       expect(result.exitCode).toBe(0);
     });
 
@@ -109,7 +116,7 @@ describe('MinimaxAdapter', () => {
     it('uses model from opts when provided', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
       mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
-        choices: [{ messages: [{ content: 'output' }] }],
+        choices: [{ message: { content: 'output' } }],
       }), { status: 200 }) as any);
 
       await adapter.execute({
@@ -126,7 +133,7 @@ describe('MinimaxAdapter', () => {
     it('defaults to MiniMax-M2.7 when no model specified', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
       mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
-        choices: [{ messages: [{ content: 'output' }] }],
+        choices: [{ message: { content: 'output' } }],
       }), { status: 200 }) as any);
 
       await adapter.execute({
@@ -156,7 +163,7 @@ describe('MinimaxAdapter', () => {
     it('sends Authorization header with Bearer token', async () => {
       process.env.MINIMAX_API_KEY = 'my-secret-key';
       mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
-        choices: [{ messages: [{ content: 'ok' }] }],
+        choices: [{ message: { content: 'ok' } }],
       }), { status: 200 }) as any);
 
       await adapter.execute({ prompt: 'test', workingDir: '/tmp' });
@@ -170,11 +177,11 @@ describe('MinimaxAdapter', () => {
     it('returns parsed ReviewResult from API', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
       mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
-        choices: [{ messages: [{ content: JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({
           passed: true,
           feedback: 'looks good',
           issues: [],
-        }) }] }],
+        }) } }],
       }), { status: 200 }) as any);
 
       const result = await adapter.review({
@@ -191,7 +198,7 @@ describe('MinimaxAdapter', () => {
     it('returns failed review when JSON cannot be parsed', async () => {
       process.env.MINIMAX_API_KEY = 'test-key';
       mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({
-        choices: [{ messages: [{ content: 'not json output' }] }],
+        choices: [{ message: { content: 'not json output' } }],
       }), { status: 200 }) as any);
 
       const result = await adapter.review({

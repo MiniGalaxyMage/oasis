@@ -7,29 +7,10 @@ export class MinimaxAdapter implements ProviderAdapter {
   name = 'minimax';
 
   async isAvailable(): Promise<boolean> {
-    // Check if MINIMAX_API_KEY is set in environment
-    const apiKey = process.env.MINIMAX_API_KEY ?? process.env.MINIMAX_API_TOKEN;
-    if (!apiKey) return false;
-
-    // Verify we can reach the API with a lightweight call
-    try {
-      const response = await fetch(`${MINIMAX_API_URL}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'MiniMax-M2.7',
-          messages: [{ role: 'user', content: 'ping' }],
-          max_tokens: 2,
-        }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      return response.ok || response.status === 400; // 400 = auth ok but bad request (ping rejected)
-    } catch {
-      return false;
-    }
+    // Check only that API key is configured — consistent with other adapters
+    // (claude/codex just check local binary availability without remote calls).
+    // API errors are surfaced at execute() time.
+    return Boolean(process.env.MINIMAX_API_KEY ?? process.env.MINIMAX_API_TOKEN);
   }
 
   async getVersion(): Promise<string> {
@@ -43,15 +24,9 @@ export class MinimaxAdapter implements ProviderAdapter {
 
     const model = opts.model ?? 'MiniMax-M2.7';
 
-    // Build messages array: system prompt baked into first user message if provided
-    const messages: Array<{ role: string; content: string }> = [];
-    
-    if (opts.flags?.includes('--no-system')) {
-      messages.push({ role: 'user', content: opts.prompt });
-    } else {
-      // Default: wrap prompt as user message
-      messages.push({ role: 'user', content: opts.prompt });
-    }
+    const messages: Array<{ role: string; content: string }> = [
+      { role: 'user', content: opts.prompt },
+    ];
 
     const requestBody = {
       model,
@@ -80,7 +55,10 @@ export class MinimaxAdapter implements ProviderAdapter {
       }
 
       const data = await response.json() as any;
-      const content = data.choices?.[0]?.messages?.[0]?.content
+      // MiniMax may use either OpenAI-style `message.content` (singular)
+      // or its own `messages[0].content` (plural). Try both.
+      const content = data.choices?.[0]?.message?.content
+        ?? data.choices?.[0]?.messages?.[0]?.content
         ?? data.choices?.[0]?.text
         ?? '';
 
